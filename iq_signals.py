@@ -1,84 +1,90 @@
-"""
-Backtester for iq_signals.py.
-Replays the exact same signal logic over the last ~5000 five-minute candles
-per pair (about 3 weeks), simulates a 5-minute expiry trade on the candle
-after each signal, and reports the real win rate vs the break-even rate.
-
-Env vars needed: TWELVE_DATA_KEY (TELEGRAM_* optional, to get results on Telegram)
-"""
-import time
+import os
+import datetime
 import requests
-from iq_signals import signal, send, PAIRS, KEY, INTERVAL
 
-PAYOUT = 0.85  # change to your IQ Option payout on the pair
-WINDOW = 120   # same candle window the live bot uses
+KEY = os.environ.get("TWELVE_DATA_KEY")
+TG_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+TG_CHAT = os.environ.get("TELEGRAM_CHAT_ID")
+
+PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CAD", "EUR/GBP", "EUR/JPY"]
+INTERVAL = "5min"
+EXPIRY = "5 minutes"
 
 
-def fetch(pair):
+def ema(vals, n):
+    k = 2 / (n + 1)
+    e = vals[0]
+    out = [e]
+    for v in vals[1:]:
+        e = v * k + e * (1 - k)
+        out.append(e)
+    return out
+
+
+def rsi(vals, n=14):
+    gains, losses = [], []
+    for i in range(1, len(vals)):
+        d = vals[i] - vals[i - 1]
+        gains.append(max(d, 0))
+        losses.append(max(-d, 0))
+    ag = sum(gains[:n]) / n
+    al = sum(losses[:n]) / n
+    for i in range(n, len(gains)):
+        ag = (ag * (n - 1) + gains[i]) / n
+        al = (al * (n - 1) + losses[i]) / n
+    if al == 0:
+        return 100
+    return 100 - 100 / (1 + ag / al)
+
+
+def signal(closes):
+    e9 = ema(closes, 9)[-1]
+    e21 = ema(closes, 21)[-1]
+    e50 = ema(closes, 50)[-1]
+    r = rsi(closes)
+    p, prev = closes[-1], closes[-2]
+    if e9 > e21 > e50 and 50 <= r <= 68 and p > e9 and p > prev:
+        return "BUY", r
+    if e9 < e21 < e50 and 32 <= r <= 50 and p < e9 and p < prev:
+        return "SELL", r
+    return None, r
+
+
+def get_closes(pair):
     resp = requests.get(
         "https://api.twelvedata.com/time_series",
-        params={"symbol": pair, "interval": INTERVAL, "outputsize": 5000, "apikey": KEY},
-        timeout=60,
+        params={"symbol": pair, "interval": INTERVAL, "outputsize": 120, "apikey": KEY},
+        timeout=20,
     ).json()
     values = resp.get("values")
     if not values:
-        print(pair, "no data:", resp.get("message"))
-        return None, None
-    values = list(reversed(values))[:-1]  # oldest -> newest, drop forming candle
-    return [float(v["open"]) for v in values], [float(v["close"]) for v in values]
+        return None
+    closes = [float(v["close"]) for v in reversed(values)]
+    return closes[:-1]
 
 
-def backtest(opens, closes):
-    wins = losses = pushes = 0
-    prev = None
-    for i in range(WINDOW - 1, len(closes) - 1):
-        sig, _ = signal(closes[i - WINDOW + 1 : i + 1])
-        if sig and sig != prev:
-            entry, exit_ = opens[i + 1], closes[i + 1]  # enter next candle, 5 min expiry
-            if exit_ == entry:
-                pushes += 1
-            elif (sig == "BUY") == (exit_ > entry):
-                wins += 1
-            else:
-                losses += 1
-        prev = sig
-    return wins, losses, pushes
+def send(msg):
+    if TG_TOKEN and TG_CHAT:
+        requests.post(
+            f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
+            json={"chat_id": TG_CHAT, "text": msg},
+            timeout=20,
+        )
+    print(msg)
 
 
 def main():
-    breakeven = 100 / (1 + PAYOUT)
-    lines = []
-    tw = tl = 0
-    for pair in PAIRS:
-        opens, closes = fetch(pair)
-        time.sleep(10)  # stay under the free API rate limit
-        if not closes:
-            continue
-        w, l, p = backtest(opens, closes)
-        n = w + l
-        rate = 100 * w / n if n else 0
-        net = w * PAYOUT - l
-        lines.append(f"{pair}: {n} trades, {rate:.1f}% win, net {net:+.1f} units")
-        tw += w
-        tl += l
-    total = tw + tl
-    if total == 0:
-        send("Backtest found no trades.")
+    if datetime.datetime.utcnow().weekday() >= 5:
+        print("Weekend, market closed.")
         return
-    rate = 100 * tw / total
-    net = tw * PAYOUT - tl
-    verdict = (
-        "Beats break-even on this sample. Still test on demo."
-        if rate > breakeven
-        else "Does NOT beat break-even. Don't trade it as is."
-    )
-    send(
-        "BACKTEST (5-min candles, 5-min expiry)\n"
-        + "\n".join(lines)
-        + f"\n\nALL: {total} trades, {rate:.1f}% win, net {net:+.1f} units (1 unit stake)"
-        + f"\nBreak-even at {PAYOUT*100:.0f}% payout: {breakeven:.1f}%"
-        + f"\n{verdict}"
-    )
+    for pair in PAIRS:
+        closes = get_closes(pair)
+        if not closes or len(closes) < 60:
+            continue
+        now, r = signal(closes)
+        before, _ = signal(closes[:-1])
+        if now and now != before:
+            send(f"{now} {pair}\nExpiry: {EXPIRY}\nRSI: {r:.0f}\nEnter on the next candle.")
 
 
 if __name__ == "__main__":
