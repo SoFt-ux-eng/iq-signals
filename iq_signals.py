@@ -1,81 +1,116 @@
-import os
-import datetime
-import requests
 
-KEY = os.environ.get("TWELVE_DATA_KEY")
-TG_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-TG_CHAT = os.environ.get("TELEGRAM_CHAT_ID")
+"""
+V-reversal alert: selloff -> bottom -> green-candle bounce => HIGHER
+                  rally -> top -> red-candle pullback      => LOWER
+1m candles, 5 min expiry. Weekdays are labelled BLITZ, weekends OTC.
 
-PAIRS = ["EUR/USD", "GBP/USD", "USD/JPY", "AUD/USD", "USD/CAD", "EUR/GBP", "EUR/JPY"]
-INTERVAL = "5min"
-EXPIRY = "15 minutes"
+Env: TWELVE_DATA_KEY, TELEGRAM_TOKEN, TELEGRAM_CHAT_IDS (comma-separated)
+Run: python reversal_alert.py [--for SECONDS]
+"""
+import os, sys, time, requests
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
+KEY = os.environ["TWELVE_DATA_KEY"]
+TOKEN = os.environ["TELEGRAM_TOKEN"]
+CHATS = [c.strip() for c in os.environ["TELEGRAM_CHAT_IDS"].split(",")]
 
-def rsi(vals, n=14):
-    g = [max(vals[i] - vals[i - 1], 0) for i in range(1, len(vals))]
-    l = [max(vals[i - 1] - vals[i], 0) for i in range(1, len(vals))]
-    ag = sum(g[:n]) / n
-    al = sum(l[:n]) / n
-    for i in range(n, len(g)):
-        ag = (ag * (n - 1) + g[i]) / n
-        al = (al * (n - 1) + l[i]) / n
-    return 100.0 if al == 0 else 100 - 100 / (1 + ag / al)
-
-
-def signal(closes):
-    w = closes[-20:]
-    m = sum(w) / 20
-    sd = (sum((x - m) ** 2 for x in w) / 20) ** 0.5
-    lo, hi = m - 2 * sd, m + 2 * sd
-    r = rsi(closes)
-    c = closes[-1]
-    if c < lo and r < 35:
-        return "BUY", r
-    if c > hi and r > 65:
-        return "SELL", r
-    return None, r
+SYMBOL, PIP = "EUR/USD", 0.0001
+MIN_MOVE_PIPS = 8      # size of the move before the turn
+MIN_BOUNCE_PIPS = 2    # how far it has turned off the extreme
+MAX_RETRACE = 0.6      # skip if already recovered more than 60%
+EXPIRY = "5 min"
+COOLDOWN = 600
+TZ = ZoneInfo("Africa/Lagos")
+last_alert = 0
 
 
-def get_closes(pair):
-    resp = requests.get(
-        "https://api.twelvedata.com/time_series",
-        params={"symbol": pair, "interval": INTERVAL, "outputsize": 120, "apikey": KEY},
-        timeout=(10, 40),
-    ).json()
-    values = resp.get("values")
-    if not values:
-        return None
-    closes = [float(v["close"]) for v in reversed(values)]
-    return closes[:-1]
+def mode_today():
+    return "BLITZ" if datetime.now(TZ).weekday() < 5 else "OTC"
 
 
-def send(msg):
-    if TG_TOKEN and TG_CHAT:
-        requests.post(
-            f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
-            json={"chat_id": TG_CHAT, "text": msg},
-            timeout=20,
-        )
-    print(msg)
+iq = None
 
 
-def main():
-    if datetime.datetime.utcnow().weekday() >= 5:
-        print("Weekend, market closed.")
-        return
-    for pair in PAIRS:
+def iq_candles():
+    """Weekend OTC prices straight from IQ Option (unofficial library, read-only use)."""
+    global iq
+    if iq is None:
+        from iqoptionapi.stable_api import IQ_Option
+        api = IQ_Option(os.environ["IQ_EMAIL"], os.environ["IQ_PASSWORD"])
+        ok, reason = api.connect()
+        if not ok:
+            raise RuntimeError(f"IQ login failed: {reason}")
+        api.change_balance("PRACTICE")
+        iq = api
+    raw = iq.get_candles("EURUSD-OTC", 60, 30, time.time())
+    if not raw:
+        iq = None  # force reconnect next time
+        raise RuntimeError("IQ returned no candles")
+    return [{"open": x["open"], "high": x["max"], "low": x["min"], "close": x["close"]}
+            for x in raw][:-1]  # drop the forming candle
+
+
+def get_candles(mode):
+    if mode == "OTC":
+        return iq_candles()
+    v = requests.get("https://api.twelvedata.com/time_series", params={
+        "symbol": SYMBOL, "interval": "1min", "outputsize": 30, "apikey": KEY},
+        timeout=15).json()["values"][::-1]
+    return [{k: float(x[k]) for k in ("open", "high", "low", "close")} for x in v][:-1]
+
+
+def detect(c):
+    r = c[-12:]
+    n = len(r)
+    i = min(range(n), key=lambda k: r[k]["low"])
+    if i >= 3 and 2 <= n - 1 - i <= 5:
+        low, top = r[i]["low"], max(x["high"] for x in r[:i])
+        drop, bounce = (top - low) / PIP, (r[-1]["close"] - low) / PIP
+        if (drop >= MIN_MOVE_PIPS and MIN_BOUNCE_PIPS <= bounce <= MAX_RETRACE * drop
+                and sum(x["close"] > x["open"] for x in r[-3:]) >= 2
+                and r[-1]["close"] > r[-1]["open"]):
+            return "HIGHER", f"dropped {drop:.1f}p, bounced {bounce:.1f}p"
+    i = max(range(n), key=lambda k: r[k]["high"])
+    if i >= 3 and 2 <= n - 1 - i <= 5:
+        high, bot = r[i]["high"], min(x["low"] for x in r[:i])
+        rise, pull = (high - bot) / PIP, (high - r[-1]["close"]) / PIP
+        if (rise >= MIN_MOVE_PIPS and MIN_BOUNCE_PIPS <= pull <= MAX_RETRACE * rise
+                and sum(x["close"] < x["open"] for x in r[-3:]) >= 2
+                and r[-1]["close"] < r[-1]["open"]):
+            return "LOWER", f"rallied {rise:.1f}p, pulled back {pull:.1f}p"
+    return None
+
+
+def ping(text):
+    for chat in CHATS:
         try:
-            closes = get_closes(pair)
+            requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+                          json={"chat_id": chat, "text": text}, timeout=15)
         except Exception as e:
-            print(pair, "failed:", e)
-            continue
-        if not closes or len(closes) < 60:
-            continue
-        now, r = signal(closes)
-        before, _ = signal(closes[:-1])
-        if now and now != before:
-            send(f"{now} {pair}\nExpiry: {EXPIRY}\nRSI: {r:.0f}\nEnter now.")
+            print("telegram error:", e)
+
+
+def check():
+    global last_alert
+    mode = mode_today()
+    sig = detect(get_candles(mode))
+    if not sig or time.time() - last_alert < COOLDOWN:
+        return
+    last_alert = time.time()
+    if mode == "BLITZ":
+        head = "⚡⚡ BLITZ SIGNAL ⚡⚡\nBLITZ ONLY - NOT OTC"
+    else:
+        head = "🕑🕑 OTC SIGNAL 🕑🕑\nOTC ONLY - NOT BLITZ"
+    arrow = "🟢 HIGHER" if sig[0] == "HIGHER" else "🔴 LOWER"
+    ping(f"{head}\n\n{SYMBOL} -> {arrow}\nTimeframe: 1m | Expiry: {EXPIRY}\n{sig[1]}\n\nConfirm on the IQ chart before entering.")
 
 
 if __name__ == "__main__":
-    main()
+    deadline = time.time() + int(sys.argv[sys.argv.index("--for") + 1]) if "--for" in sys.argv else None
+    while deadline is None or time.time() < deadline:
+        try:
+            check()
+        except Exception as e:
+            print("error:", e)
+        time.sleep(60)
