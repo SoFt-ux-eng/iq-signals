@@ -17,7 +17,7 @@ CHATS = [c.strip() for c in os.environ["TELEGRAM_CHAT_ID"].split(",")]
 # td = Twelve Data symbol (weekdays), iq = IQ Option OTC name (weekends)
 # move = size of the move before the turn, bounce = min turn off the extreme (both 
 PAIRS = {
-    "EUR/USD": {"td": "EUR/USD", "iq": "EURUSD-OTC", "pip": 0.0001, "move": 1, "bounce": 1},
+    "EUR/USD": {"td": "EUR/USD", "iq": "EURUSD-OTC", "pip": 0.0001, "move": 8, "bounce": 2},
     "USD/JPY": {"td": "USD/JPY", "iq": "USDJPY-OTC", "pip": 0.01,   "move": 8,  "bounce": 2},
     "XAU/USD": {"td": "XAU/USD", "iq": "XAUUSD-OTC", "pip": 0.10,   "move": 15, "bounce": 3},
 }
