@@ -1,0 +1,50 @@
+name: Gold alert
+
+
+on:
+
+  schedule:
+
+    - cron: "5 * * * *"   # every hour at minute 5
+
+  workflow_dispatch:       # manual run = sends a test/status message
+
+
+jobs:
+
+  gold:
+
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 5
+
+    steps:
+
+      - uses: actions/checkout@v4
+
+
+      - uses: actions/setup-python@v5
+
+        with:
+
+          python-version: "3.12"
+
+
+      - name: Install requests
+
+        run: pip install requests
+
+
+      - name: Run gold alert
+
+        env:
+
+          TWELVE_DATA_KEY: ${{ secrets.TWELVE_DATA_KEY }}
+
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+        run: python gold_alert.py ${{ github.event_name == 'workflow_dispatch' && '--test' || '' }}
+
+
