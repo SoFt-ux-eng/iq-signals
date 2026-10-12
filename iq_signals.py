@@ -1,4 +1,3 @@
-
 """
 V-reversal alert: selloff -> bottom -> green-candle bounce => HIGHER
                   rally -> top -> red-candle pullback      => LOWER
@@ -15,14 +14,18 @@ KEY = os.environ["TWELVE_DATA_KEY"]
 TOKEN = os.environ["TELEGRAM_TOKEN"]
 CHATS = [c.strip() for c in os.environ["TELEGRAM_CHAT_IDS"].split(",")]
 
-SYMBOL, PIP = "EUR/USD", 0.0001
-MIN_MOVE_PIPS = 8      # size of the move before the turn
-MIN_BOUNCE_PIPS = 2    # how far it has turned off the extreme
+# td = Twelve Data symbol (weekdays), iq = IQ Option OTC name (weekends)
+# move = size of the move before the turn, bounce = min turn off the extreme (both in pips)
+PAIRS = {
+    "EUR/USD": {"td": "EUR/USD", "iq": "EURUSD-OTC", "pip": 0.0001, "move": 8,  "bounce": 2},
+    "USD/JPY": {"td": "USD/JPY", "iq": "USDJPY-OTC", "pip": 0.01,   "move": 8,  "bounce": 2},
+    "XAU/USD": {"td": "XAU/USD", "iq": "XAUUSD-OTC", "pip": 0.10,   "move": 15, "bounce": 3},
+}
 MAX_RETRACE = 0.6      # skip if already recovered more than 60%
 EXPIRY = "5 min"
 COOLDOWN = 600
 TZ = ZoneInfo("Africa/Lagos")
-last_alert = 0
+last_alert = {}
 
 
 def mode_today():
@@ -32,7 +35,7 @@ def mode_today():
 iq = None
 
 
-def iq_candles():
+def iq_candles(cfg):
     """Weekend OTC prices straight from IQ Option (unofficial library, read-only use)."""
     global iq
     if iq is None:
@@ -43,7 +46,7 @@ def iq_candles():
             raise RuntimeError(f"IQ login failed: {reason}")
         api.change_balance("PRACTICE")
         iq = api
-    raw = iq.get_candles("EURUSD-OTC", 60, 30, time.time())
+    raw = iq.get_candles(cfg["iq"], 60, 30, time.time())
     if not raw:
         iq = None  # force reconnect next time
         raise RuntimeError("IQ returned no candles")
@@ -51,16 +54,17 @@ def iq_candles():
             for x in raw][:-1]  # drop the forming candle
 
 
-def get_candles(mode):
+def get_candles(mode, cfg):
     if mode == "OTC":
-        return iq_candles()
+        return iq_candles(cfg)
     v = requests.get("https://api.twelvedata.com/time_series", params={
-        "symbol": SYMBOL, "interval": "1min", "outputsize": 30, "apikey": KEY},
+        "symbol": cfg["td"], "interval": "1min", "outputsize": 30, "apikey": KEY},
         timeout=15).json()["values"][::-1]
     return [{k: float(x[k]) for k in ("open", "high", "low", "close")} for x in v][:-1]
 
 
-def detect(c):
+def detect(c, cfg):
+    PIP, MIN_MOVE_PIPS, MIN_BOUNCE_PIPS = cfg["pip"], cfg["move"], cfg["bounce"]
     r = c[-12:]
     n = len(r)
     i = min(range(n), key=lambda k: r[k]["low"])
@@ -92,18 +96,22 @@ def ping(text):
 
 
 def check():
-    global last_alert
     mode = mode_today()
-    sig = detect(get_candles(mode))
-    if not sig or time.time() - last_alert < COOLDOWN:
-        return
-    last_alert = time.time()
-    if mode == "BLITZ":
-        head = "⚡⚡ BLITZ SIGNAL ⚡⚡\nBLITZ ONLY - NOT OTC"
-    else:
-        head = "🕑🕑 OTC SIGNAL 🕑🕑\nOTC ONLY - NOT BLITZ"
-    arrow = "🟢 HIGHER" if sig[0] == "HIGHER" else "🔴 LOWER"
-    ping(f"{head}\n\n{SYMBOL} -> {arrow}\nTimeframe: 1m | Expiry: {EXPIRY}\n{sig[1]}\n\nConfirm on the IQ chart before entering.")
+    for sym, cfg in PAIRS.items():
+        try:
+            sig = detect(get_candles(mode, cfg), cfg)
+        except Exception as e:
+            print("error", sym, e)
+            continue
+        if not sig or time.time() - last_alert.get(sym, 0) < COOLDOWN:
+            continue
+        last_alert[sym] = time.time()
+        if mode == "BLITZ":
+            head = "⚡⚡ BLITZ SIGNAL ⚡⚡\nBLITZ ONLY - NOT OTC"
+        else:
+            head = "🕑🕑 OTC SIGNAL 🕑🕑\nOTC ONLY - NOT BLITZ"
+        arrow = "🟢 HIGHER" if sig[0] == "HIGHER" else "🔴 LOWER"
+        ping(f"{head}\n\n{sym} -> {arrow}\nTimeframe: 1m | Expiry: {EXPIRY}\n{sig[1]}\n\nConfirm on the IQ chart before entering.")
 
 
 if __name__ == "__main__":
@@ -114,3 +122,4 @@ if __name__ == "__main__":
         except Exception as e:
             print("error:", e)
         time.sleep(60)
+
