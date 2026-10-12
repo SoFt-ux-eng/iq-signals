@@ -115,6 +115,9 @@ def check():
 
 
 if __name__ == "__main__":
+    if "--test" in sys.argv:
+        ping("✅ Test ping: the bot can reach you")
+        sys.exit(0)
     deadline = time.time() + int(sys.argv[sys.argv.index("--for") + 1]) if "--for" in sys.argv else None
     while deadline is None or time.time() < deadline:
         try:
@@ -122,4 +125,3 @@ if __name__ == "__main__":
         except Exception as e:
             print("error:", e)
         time.sleep(60)
-
