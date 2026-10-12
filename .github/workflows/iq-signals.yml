@@ -16,7 +16,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install requests git+https://github.com/iqoptionapi/iqoptionapi.git
-      - run: python reversal_alert.py --for 285
+      - run: python iq_signals.py --for 285
         env:
           TWELVE_DATA_KEY: ${{ secrets.TWELVE_DATA_KEY }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
