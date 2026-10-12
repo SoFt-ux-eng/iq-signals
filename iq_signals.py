@@ -15,11 +15,12 @@ TOKEN = os.environ["TELEGRAM_TOKEN"]
 CHATS = [c.strip() for c in os.environ["TELEGRAM_CHAT_ID"].split(",")]
 
 # td = Twelve Data symbol (weekdays), iq = IQ Option OTC name (weekends)
-# move = size of the move before the turn, bounce = min turn off the extreme (both in pips)
+# move = size of the move before the turn, bounce = min turn off the extreme (both 
 PAIRS = {
     "EUR/USD": {"td": "EUR/USD", "iq": "EURUSD-OTC", "pip": 0.0001, "move": 8,  "bounce": 2},
-    "USD/JPY": {"td": "USD/JPY", "iq": "USDJPY-OTC", "pip": 0.01,   "move": 8,  "boun
-          "XAU/USD": {"td": "XAU/USD", "iq": "XAUUSD-OTC", "pip": 0.10,   "move": 15, "bounce": 3},         }
+    "USD/JPY": {"td": "USD/JPY", "iq": "USDJPY-OTC", "pip": 0.01,   "move": 8,  "bounce": 2},
+    "XAU/USD": {"td": "XAU/USD", "iq": "XAUUSD-OTC", "pip": 0.10,   "move": 15, "bounce": 3},
+}
 MAX_RETRACE = 0.6      # skip if already recovered more than 60%
 EXPIRY = "5 min"
 COOLDOWN = 600
