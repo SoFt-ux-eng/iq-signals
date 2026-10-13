@@ -5,7 +5,7 @@ on:
 
   schedule:
 
-    - cron: "5 * * * *"   # every hour at minute 5
+    - cron: 5 * * * *   # every hour at minute 5
 
   workflow_dispatch:       # manual run = sends a test/status message
 
@@ -45,6 +45,6 @@ jobs:
 
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
-        run: python gold_alert.py ${{ github.event_name == 'workflow_dispatch' && '--test' || '' }}
+        run: python gold_alert.py ${{ github.event_name == workflow_dispatch && '--test' || '' }}
 
 
