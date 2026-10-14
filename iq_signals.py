@@ -18,6 +18,7 @@ CHATS = [c.strip() for c in os.environ["TELEGRAM_CHAT_ID"].split(",")]
 # move = size of the move before the turn, bounce = min turn off the extreme (both 
 PAIRS = {
     "EUR/USD": {"td": "EUR/USD", "iq": "EURUSD-OTC", "pip": 0.0001, "move": 8, "bounce": 2},
+    "GBP/USD": {"td": "GBP/USD", "iq": "GBPUSD-OTC", "pip": 0.0001, "move": 8, "bounce": 2},
     "USD/JPY": {"td": "USD/JPY", "iq": "USDJPY-OTC", "pip": 0.01,   "move": 8,  "bounce": 2},
     "XAU/USD": {"td": "XAU/USD", "iq": "XAUUSD-OTC", "pip": 0.10,   "move": 15, "bounce": 3},
 }
