@@ -1,13 +1,7 @@
 """
-Multi-Strategy Profitable Trading Bot:
-  1) V-Reversals: Sharp impulse moves + bounce/pullback.
-  2) Liquidity Sweeps (Stop Hunts): Institutional wicks past swing highs/lows + rejection.
-  3) Momentum Breakouts: Strong body candles breaking 15-candle ranges.
-  4) Rejection Pin Bars: Hammer / Shooting star rejections at local extremes.
-  5) MT5 Gold Breakouts: Hourly 8h range breakouts with RSI confirmation.
-
-Pairs: EUR/USD, GBP/USD, USD/JPY, XAU/USD (Gold).
-Weekdays = BLITZ (Twelve Data) | Weekends = OTC (IQ Option).
+Multi-Strategy Trading Bot:
+  - Weekdays (Live Markets / Twelve Data): Monitors EUR/USD, GBP/USD, USD/JPY, & Gold + MT5 Gold Breakouts.
+  - Weekends (OTC / IQ Option): Monitors EUR/USD OTC, GBP/USD OTC, USD/JPY OTC, & Gold OTC.
 """
 import os, sys, time, requests
 from datetime import datetime
@@ -18,19 +12,29 @@ TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
 CHAT_ENV = os.environ.get("TELEGRAM_CHAT_ID", "")
 CHATS = [c.strip() for c in CHAT_ENV.split(",") if c.strip()]
 
-PAIRS = {
-    "EUR/USD": {"td": "EUR/USD", "iq": "EURUSD-OTC", "pip": 0.0001, "move": 5, "bounce": 1.5},
-    "GBP/USD": {"td": "GBP/USD", "iq": "GBPUSD-OTC", "pip": 0.0001, "move": 5, "bounce": 1.5},
-    "USD/JPY": {"td": "USD/JPY", "iq": "USDJPY-OTC", "pip": 0.01,   "move": 5, "bounce": 1.5},
-    "XAU/USD": {"td": "XAU/USD", "iq": "XAUUSD-OTC", "pip": 0.10,   "move": 10, "bounce": 2.5},
+# Weekday Live Markets (Twelve Data) - All 4 pairs
+WEEKDAY_PAIRS = {
+    "EUR/USD": {"td": "EUR/USD", "pip": 0.0001, "move": 5, "bounce": 1.5},
+    "GBP/USD": {"td": "GBP/USD", "pip": 0.0001, "move": 5, "bounce": 1.5},
+    "USD/JPY": {"td": "USD/JPY", "pip": 0.01,   "move": 5, "bounce": 1.5},
+    "XAU/USD": {"td": "XAU/USD", "pip": 0.10,   "move": 10, "bounce": 2.5},
 }
+
+# Weekend OTC Markets (IQ Option) - All 4 OTC pairs
+WEEKEND_OTC_PAIRS = {
+    "EUR/USD OTC": {"iq": "EURUSD-OTC", "pip": 0.0001, "move": 5, "bounce": 1.5},
+    "GBP/USD OTC": {"iq": "GBPUSD-OTC", "pip": 0.0001, "move": 5, "bounce": 1.5},
+    "USD/JPY OTC": {"iq": "USDJPY-OTC", "pip": 0.01,   "move": 5, "bounce": 1.5},
+    "Gold OTC":    {"iq": "GOLD-OTC",   "pip": 0.10,   "move": 10, "bounce": 2.5},
+}
+
 MAX_RETRACE = 0.65
 EXPIRY = "5 min"
 COOLDOWN = 300
 TZ = ZoneInfo("Africa/Lagos")
 last_alert = {}
 
-# --- MT5 Gold breakout settings ---
+# --- MT5 Gold breakout settings (Weekdays only) ---
 MT5_GOLD_COOLDOWN = 3600   
 MT5_STOP_PCT = 0.15        
 MT5_RR = 2                 
@@ -38,7 +42,7 @@ mt5_last_alert = 0
 
 
 def mode_today():
-    return "BLITZ" if datetime.now(TZ).weekday() < 5 else "OTC"
+    return "WEEKDAY" if datetime.now(TZ).weekday() < 5 else "OTC"
 
 
 iq = None
@@ -94,7 +98,6 @@ def rsi(closes, period=14):
 
 
 def detect_strategies(c, cfg):
-    """Scans for multiple profitable setups: V-Reversal, Liquidity Sweep, Momentum Breakout, and Pin Bar."""
     if len(c) < 35:
         return None
 
@@ -106,9 +109,8 @@ def detect_strategies(c, cfg):
     r = c[-18:]
     n = len(r)
     current = c[-1]
-    prev = c[-2]
 
-    # --- STRATEGY 1: V-REVERSAL ---
+    # 1. V-REVERSAL
     i = min(range(n), key=lambda k: r[k]["low"])
     if i >= 2 and 1 <= n - 1 - i <= 7:
         low, top = r[i]["low"], max(x["high"] for x in r[:i])
@@ -125,7 +127,7 @@ def detect_strategies(c, cfg):
                 and r[-1]["close"] < r[-1]["open"] and current_rsi >= 55):
             return "LOWER", "⚡ V-REVERSAL (Resistance Pullback)", f"Rallied {rise:.1f}p, pulled back {pull:.1f}p | RSI: {current_rsi:.0f}"
 
-    # --- STRATEGY 2: LIQUIDITY SWEEP / STOP HUNT ---
+    # 2. LIQUIDITY SWEEP
     lookback = c[-30:-1]
     hi = max(x["high"] for x in lookback)
     lo = min(x["low"] for x in lookback)
@@ -140,7 +142,7 @@ def detect_strategies(c, cfg):
         if sweep_pips >= 1.0 and current_rsi <= 50:
             return "HIGHER", "🌊 LIQUIDITY SWEEP (Bullish Stop Hunt)", f"Grabbed sell-stops below {lo:.4f} by {sweep_pips:.1f}p & rejected | RSI: {current_rsi:.0f}"
 
-    # --- STRATEGY 3: MOMENTUM BREAKOUT ---
+    # 3. MOMENTUM BREAKOUT
     range_hi = max(x["high"] for x in c[-15:-2])
     range_lo = min(x["low"] for x in c[-15:-2])
     body_size = abs(current["close"] - current["open"]) / PIP
@@ -151,17 +153,13 @@ def detect_strategies(c, cfg):
     if current["close"] < range_lo and body_size >= 3.0 and current["close"] < current["open"] and current_rsi < 45:
         return "LOWER", "🚀 MOMENTUM BREAKOUT (Bearish)", f"Strong expansion candle broke 15-candle low | Body: {body_size:.1f}p | RSI: {current_rsi:.0f}"
 
-    # --- STRATEGY 4: REJECTION PIN BAR ---
+    # 4. PIN BAR REJECTION
     total_range = current["high"] - current["low"]
     if total_range > 0:
         upper_wick = current["high"] - max(current["open"], current["close"])
         lower_wick = min(current["open"], current["close"]) - current["low"]
-        
-        # Bullish Hammer Pin Bar at local low
         if lower_wick >= (total_range * 0.6) and current["close"] > current["open"] and current_rsi < 40:
             return "HIGHER", "📌 REJECTION PIN BAR (Bullish Hammer)", f"Long lower rejection wick at local low | RSI: {current_rsi:.0f}"
-            
-        # Bearish Shooting Star Pin Bar at local high
         if upper_wick >= (total_range * 0.6) and current["close"] < current["open"] and current_rsi > 60:
             return "LOWER", "📌 REJECTION PIN BAR (Bearish Shooting Star)", f"Long upper rejection wick at local high | RSI: {current_rsi:.0f}"
 
@@ -237,7 +235,10 @@ def mt5_gold_check():
 
 def check():
     mode = mode_today()
-    for sym, cfg in PAIRS.items():
+    # Weekdays scan all 4 live pairs. Weekends scan all 4 OTC pairs.
+    pairs_to_scan = WEEKDAY_PAIRS if mode == "WEEKDAY" else WEEKEND_OTC_PAIRS
+
+    for sym, cfg in pairs_to_scan.items():
         try:
             candles = get_candles(mode, cfg)
         except Exception as e:
@@ -247,7 +248,7 @@ def check():
         setup = detect_strategies(candles, cfg)
         if setup and time.time() - last_alert.get(sym, 0) >= COOLDOWN:
             last_alert[sym] = time.time()
-            head = "⚡ *BLITZ PROFITABLE SIGNAL* ⚡" if mode == "BLITZ" else "🕑 *OTC PROFITABLE SIGNAL* 🕑"
+            head = "⚡ *WEEKDAY LIVE SIGNAL* ⚡" if mode == "WEEKDAY" else "🕑 *WEEKEND OTC SIGNAL* 🕑"
             arrow = "🟢 *HIGHER (BUY)*" if setup[0] == "HIGHER" else "🔴 *LOWER (SELL)*"
             
             ping(
@@ -257,11 +258,11 @@ def check():
                 f"🛡️ **Strategy:** *{setup[1]}*\n"
                 f"⏱️ **Timeframe:** `1m` | **Expiry:** `{EXPIRY}`\n"
                 f"📈 **Analysis:** {setup[2]}\n\n"
-                f"_🚀 Multi-strategy setup confirmed. Check chart & execute!_"
+                f"_🚀 Setup confirmed._"
             )
 
-    # Check MT5 Gold Breakouts (Weekdays only)
-    if mode == "BLITZ":
+    # Check MT5 Gold Hourly Breakouts on Weekdays ONLY
+    if mode == "WEEKDAY":
         try:
             mt5_gold_check()
         except Exception as e:
@@ -270,7 +271,7 @@ def check():
 
 if __name__ == "__main__":
     if "--test" in sys.argv:
-        ping("✅ *Test Broadcast:* Multi-Strategy Bot is online and scanning all profitable setups!")
+        ping("✅ *Test Broadcast:* Bot is live and strictly following your Weekday Live / Weekend OTC / MT5 schedule!")
         sys.exit(0)
     deadline = time.time() + int(sys.argv[sys.argv.index("--for") + 1]) if "--for" in sys.argv else None
     while deadline is None or time.time() < deadline:
