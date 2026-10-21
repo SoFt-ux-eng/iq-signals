@@ -1,3 +1,4 @@
+
 """
 Master Multi-Strategy Trading Bot (2 PM - 6 PM WAT Window):
   - Scans for ALL major profitable setups: Engulfing, Pin Bars, Liquidity Sweeps, 
@@ -25,7 +26,7 @@ WEEKEND_OTC_PAIRS = {
     "EUR/USD OTC": {"iq": "EURUSD-OTC", "pip": 0.0001, "move": 4, "bounce": 1.2},
     "GBP/USD OTC": {"iq": "GBPUSD-OTC", "pip": 0.0001, "move": 4, "bounce": 1.2},
     "USD/JPY OTC": {"iq": "USDJPY-OTC", "pip": 0.01,   "move": 4, "bounce": 1.2},
-    "Gold OTC":    {"iq": "GOLD-OTC",   "pip": 0.10,   "move": 8, "bounce": 2.0},
+    "Gold OTC":    {"iq": "XAUUSD-OTC", "pip": 0.10,   "move": 8, "bounce": 2.0},
 }
 
 EXPIRY = "5 min"
@@ -109,7 +110,7 @@ def detect_all_profitable_setups(c, cfg):
     closes = [x["close"] for x in c]
     current_rsi = rsi(closes, 14)
     PIP = cfg["pip"]
-    
+
     current = c[-1]
     prev = c[-2]
     prev2 = c[-3]
@@ -128,7 +129,7 @@ def detect_all_profitable_setups(c, cfg):
     if total_range > 0:
         upper_wick = current["high"] - max(current["open"], current["close"])
         lower_wick = min(current["open"], current["close"]) - current["low"]
-        
+
         if lower_wick >= (total_range * 0.6) and current["close"] > current["open"] and current_rsi < 42:
             return "HIGHER", "📌 PIN BAR / HAMMER (Bullish Rejection)", f"Long lower wick rejection at support | RSI: {current_rsi:.0f}"
         if upper_wick >= (total_range * 0.6) and current["close"] < current["open"] and current_rsi > 58:
@@ -197,6 +198,7 @@ def mt5_gold_check():
             "symbol": "XAU/USD", "interval": "1h", "outputsize": 30, "apikey": KEY},
             timeout=15).json()
         if "values" not in resp:
+            print("mt5 gold error:", resp)
             return
         v = resp["values"][::-1]
         candles = [{k: float(x[k]) for k in ("open", "high", "low", "close")} for x in v]
@@ -208,7 +210,7 @@ def mt5_gold_check():
 
     closes = [c["close"] for c in candles]
     current = candles[-1]
-    lookback = candles[-9:-1]          
+    lookback = candles[-9:-1]
     hi8 = max(c["high"] for c in lookback)
     lo8 = min(c["low"] for c in lookback)
     r = rsi(closes[:-1], 14)
@@ -267,7 +269,7 @@ def check():
             last_alert[sym] = time.time()
             head = "⚡ *LIVE MARKET PROFITABLE SIGNAL* ⚡" if mode == "WEEKDAY" else "🕑 *OTC PROFITABLE SIGNAL* 🕑"
             arrow = "🟢 *HIGHER (BUY)*" if setup[0] == "HIGHER" else "🔴 *LOWER (SELL)*"
-            
+
             ping(
                 f"{head}\n\n"
                 f"📊 **Asset:** `{sym}`\n"
@@ -290,12 +292,8 @@ if __name__ == "__main__":
     if "--test" in sys.argv:
         ping("✅ *Test Broadcast:* Master Bot is active and locked to the 2 PM - 6 PM WAT liquidity window!")
         sys.exit(0)
-    deadline = time.time() + int(sys.argv[sys.argv.index("--for") + 1]) if "--for" in sys.argv else None
-    while deadline is None or time.time() < deadline:
-        try:
-            check()
-        except Exception as e:
-            print("error:", e)
-        time.sleep(60)
-
+    try:
+        check()
+    except Exception as e:
+        print("error:", e)
 
