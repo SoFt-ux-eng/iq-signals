@@ -11,7 +11,8 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 KEY = os.environ.get("TWELVE_DATA_KEY", "")
-TOKEN = os.environ.get("TELEGRAM_TOKEN", "")
+TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "") or os.environ.get("TELEGRAM_TOKEN", "")
+
 CHAT_ENV = os.environ.get("TELEGRAM_CHAT_ID", "")
 CHATS = [c.strip() for c in CHAT_ENV.split(",") if c.strip()]
 
