@@ -1,13 +1,16 @@
 name: reversal-alert
+
 on:
   schedule:
-    - cron: "*/5 7-17 * * *"
+    - cron: '*/5 13-17 * * *'
   workflow_dispatch:
+
 concurrency:
   group: reversal-alert
   cancel-in-progress: false
+
 jobs:
-  run:
+  build:
     runs-on: ubuntu-latest
     timeout-minutes: 6
     steps:
@@ -16,11 +19,13 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install requests git+https://github.com/iqoptionapi/iqoptionapi.git
-      - run: python iq_signals.py --for 285
+      - run: python iq_signals.py
         env:
           TWELVE_DATA_KEY: ${{ secrets.TWELVE_DATA_KEY }}
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           IQ_EMAIL: ${{ secrets.IQ_EMAIL }}
           IQ_PASSWORD: ${{ secrets.IQ_PASSWORD }}
 
+  
