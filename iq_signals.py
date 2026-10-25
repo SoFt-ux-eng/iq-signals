@@ -1,18 +1,20 @@
-
 """
-Master Multi-Strategy Trading Bot (2 PM - 6 PM WAT Window):
-  - Scans for ALL major profitable setups: Engulfing, Pin Bars, Liquidity Sweeps, 
-    V-Reversals, Momentum Breakouts, Morning/Evening Stars, and MT5 Gold Breakouts.
-  - Weekdays: Live Markets (EUR/USD, GBP/USD, USD/JPY, Gold) + MT5 Gold.
-  - Weekends: OTC Markets (EUR/USD OTC, GBP/USD OTC, USD/JPY OTC, Gold OTC).
+Master Multi-Strategy Trading Bot (2 PM - 6 PM WAT Window)
+- Complete version with ALL strategies: Engulfing, Pin Bars, Liquidity Sweeps, 
+  Momentum Breakouts, V-Reversals, and MT5 Gold Breakouts.
+- Built-in token fallback and explicit error logs to prevent silent failures.
 """
-import os, sys, time, requests
+import os
+import sys
+import time
+import requests
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+# --- Configurations & Secrets ---
 KEY = os.environ.get("TWELVE_DATA_KEY", "")
+# Automatically checks both secret names so it never fails due to naming mismatches
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "") or os.environ.get("TELEGRAM_TOKEN", "")
-
 CHAT_ENV = os.environ.get("TELEGRAM_CHAT_ID", "")
 CHATS = [c.strip() for c in CHAT_ENV.split(",") if c.strip()]
 
@@ -31,7 +33,7 @@ WEEKEND_OTC_PAIRS = {
 }
 
 EXPIRY = "5 min"
-COOLDOWN = 240  # 4-minute cooldown to catch consecutive valid setups
+COOLDOWN = 240  # 4-minute cooldown between signals per asset
 TZ = ZoneInfo("Africa/Lagos")
 last_alert = {}
 
@@ -57,34 +59,53 @@ iq = None
 
 def iq_candles(cfg):
     global iq
+    if not TOKEN:
+        print("Warning: Telegram Token is missing!")
     if iq is None:
-        from iqoptionapi.stable_api import IQ_Option
-        email = os.environ.get("IQ_EMAIL", "")
-        password = os.environ.get("IQ_PASSWORD", "")
-        api = IQ_Option(email, password)
-        ok, reason = api.connect()
-        if not ok:
-            raise RuntimeError(f"IQ login failed: {reason}")
-        api.change_balance("PRACTICE")
-        iq = api
-    raw = iq.get_candles(cfg["iq"], 60, 40, time.time())
-    if not raw:
+        try:
+            from iqoptionapi.stable_api import IQ_Option
+            email = os.environ.get("IQ_EMAIL", "")
+            password = os.environ.get("IQ_PASSWORD", "")
+            api = IQ_Option(email, password)
+            ok, reason = api.connect()
+            if not ok:
+                print(f"IQ Option connection failed: {reason}")
+                return None
+            api.change_balance("PRACTICE")
+            iq = api
+        except Exception as e:
+            print(f"IQ Option initialization error: {e}")
+            return None
+    
+    try:
+        raw = iq.get_candles(cfg["iq"], 60, 40, time.time())
+        if not raw:
+            print(f"IQ Option returned no candles for {cfg['iq']}")
+            iq = None
+            return None
+        return [{"open": x["open"], "high": x["max"], "low": x["min"], "close": x["close"]} for x in raw][:-1]
+    except Exception as e:
+        print(f"IQ Option candle fetch error for {cfg['iq']}: {e}")
         iq = None
-        raise RuntimeError("IQ returned no candles")
-    return [{"open": x["open"], "high": x["max"], "low": x["min"], "close": x["close"]}
-            for x in raw][:-1]
+        return None
 
 
 def get_candles(mode, cfg):
     if mode == "OTC":
         return iq_candles(cfg)
-    resp = requests.get("https://api.twelvedata.com/time_series", params={
-        "symbol": cfg["td"], "interval": "1min", "outputsize": 40, "apikey": KEY},
-        timeout=15).json()
-    if "values" not in resp:
-        raise RuntimeError(f"Twelve Data error for {cfg['td']}: {resp}")
-    v = resp["values"][::-1]
-    return [{k: float(x[k]) for k in ("open", "high", "low", "close")} for x in v][:-1]
+    
+    try:
+        resp = requests.get("https://api.twelvedata.com/time_series", params={
+            "symbol": cfg["td"], "interval": "1min", "outputsize": 40, "apikey": KEY},
+            timeout=15).json()
+        if "values" not in resp:
+            print(f"Twelve Data error for {cfg['td']}: {resp}")
+            return None
+        v = resp["values"][::-1]
+        return [{k: float(x[k]) for k in ("open", "high", "low", "close")} for x in v][:-1]
+    except Exception as e:
+        print(f"Twelve Data request exception for {cfg['td']}: {e}")
+        return None
 
 
 def rsi(closes, period=14):
@@ -104,8 +125,8 @@ def rsi(closes, period=14):
 
 
 def detect_all_profitable_setups(c, cfg):
-    """Scans for a comprehensive suite of profitable price action and institutional patterns."""
-    if len(c) < 30:
+    """Scans for ALL major profitable setups: Engulfing, Pin Bars, Liquidity Sweeps, V-Reversals, and Momentum Breakouts."""
+    if not c or len(c) < 30:
         return None
 
     closes = [x["close"] for x in c]
@@ -114,7 +135,6 @@ def detect_all_profitable_setups(c, cfg):
 
     current = c[-1]
     prev = c[-2]
-    prev2 = c[-3]
 
     # 1. BULLISH / BEARISH ENGULFING PATTERN
     if current["close"] > current["open"] and prev["close"] < prev["open"]:
@@ -182,12 +202,17 @@ def detect_all_profitable_setups(c, cfg):
 
 
 def ping(text):
+    if not TOKEN:
+        print("Telegram broadcast failed: TOKEN is empty.")
+        return
     for chat in CHATS:
         try:
-            requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+            resp = requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage",
                           json={"chat_id": chat, "text": text, "parse_mode": "Markdown"}, timeout=15)
+            if not resp.json().get("ok"):
+                print(f"Telegram API response error: {resp.text}")
         except Exception as e:
-            print("telegram error:", e)
+            print("Telegram exception error:", e)
 
 
 def mt5_gold_check():
@@ -250,7 +275,6 @@ def mt5_gold_check():
 
 
 def check():
-    # Enforce strict 2 PM to 6 PM WAT liquidity window
     if not is_liquidity_time():
         print("Outside liquidity window (2 PM - 6 PM WAT). Skipping scan.")
         return
@@ -259,10 +283,8 @@ def check():
     pairs_to_scan = WEEKDAY_PAIRS if mode == "WEEKDAY" else WEEKEND_OTC_PAIRS
 
     for sym, cfg in pairs_to_scan.items():
-        try:
-            candles = get_candles(mode, cfg)
-        except Exception as e:
-            print(f"error fetching {sym}: {e}")
+        candles = get_candles(mode, cfg)
+        if not candles:
             continue
 
         setup = detect_all_profitable_setups(candles, cfg)
@@ -291,10 +313,10 @@ def check():
 
 if __name__ == "__main__":
     if "--test" in sys.argv:
-        ping("✅ *Test Broadcast:* Master Bot is active and locked to the 2 PM - 6 PM WAT liquidity window!")
+        ping("✅ *Test Broadcast:* Master Bot has been fully updated with all strategies and is active!")
         sys.exit(0)
     try:
         check()
     except Exception as e:
-        print("error:", e)
+        print("Fatal runtime error:", e)
 
