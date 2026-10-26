@@ -1,8 +1,7 @@
 """
-Master Multi-Strategy Trading Bot (2 PM - 6 PM WAT Window)
-- Complete version with ALL strategies: Engulfing, Pin Bars, Liquidity Sweeps, 
-  Momentum Breakouts, V-Reversals, and MT5 Gold Breakouts.
-- Built-in token fallback and explicit error logs to prevent silent failures.
+Master Multi-Strategy Trading Bot - Continuous Background Worker
+- Runs 24/7 in a continuous loop: checks markets every 60 seconds during 2 PM - 6 PM WAT.
+- No GitHub Actions cron delays; triggers signals instantly on the exact minute.
 """
 import os
 import sys
@@ -13,7 +12,6 @@ from zoneinfo import ZoneInfo
 
 # --- Configurations & Secrets ---
 KEY = os.environ.get("TWELVE_DATA_KEY", "")
-# Automatically checks both secret names so it never fails due to naming mismatches
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "") or os.environ.get("TELEGRAM_TOKEN", "")
 CHAT_ENV = os.environ.get("TELEGRAM_CHAT_ID", "")
 CHATS = [c.strip() for c in CHAT_ENV.split(",") if c.strip()]
@@ -274,11 +272,7 @@ def mt5_gold_check():
         )
 
 
-def check():
-    if not is_liquidity_time():
-        print("Outside liquidity window (2 PM - 6 PM WAT). Skipping scan.")
-        return
-
+def scan_markets():
     mode = mode_today()
     pairs_to_scan = WEEKDAY_PAIRS if mode == "WEEKDAY" else WEEKEND_OTC_PAIRS
 
@@ -303,7 +297,6 @@ def check():
                 f"_🚀 Jump in and execute!_"
             )
 
-    # Check MT5 Gold Hourly Breakouts during weekdays within liquidity hours
     if mode == "WEEKDAY":
         try:
             mt5_gold_check()
@@ -313,10 +306,25 @@ def check():
 
 if __name__ == "__main__":
     if "--test" in sys.argv:
-        ping("✅ *Test Broadcast:* Master Bot has been fully updated with all strategies and is active!")
+        ping("✅ *Test Broadcast:* Continuous Master Bot is online and active!")
         sys.exit(0)
-    try:
-        check()
-    except Exception as e:
-        print("Fatal runtime error:", e)
+
+    print("🤖 Master Trading Bot started in continuous background mode...")
+    ping("🤖 *Bot Started:* Continuous background worker is online!")
+
+    while True:
+        try:
+            if is_liquidity_time():
+                print(f"[{datetime.now(TZ).strftime('%H:%M:%S')}] Within liquidity window (2 PM - 6 PM WAT). Scanning markets...")
+                scan_markets()
+                # Check every 60 seconds during the active window
+                time.sleep(60)
+            else:
+                # Outside window, sleep for 5 minutes before checking time again
+                print(f"[{datetime.now(TZ).strftime('%H:%M:%S')}] Outside liquidity window (2 PM - 6 PM WAT). Sleeping...")
+                time.sleep(300)
+        except Exception as e:
+            print(f"Runtime error in main loop: {e}")
+            time.sleep(60)
+
 
