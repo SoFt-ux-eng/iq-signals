@@ -306,25 +306,19 @@ def scan_markets():
 
 if __name__ == "__main__":
     if "--test" in sys.argv:
-        ping("✅ *Test Broadcast:* Continuous Master Bot is online and active!")
+        ping("✅ *Test Broadcast:* Master Bot is online and active!")
         sys.exit(0)
 
-    print("🤖 Master Trading Bot started in continuous background mode...")
-    ping("🤖 *Bot Started:* Continuous background worker is online!")
+    print("🤖 Master Trading Bot execution started...")
+    try:
+        if is_liquidity_time():
+            print(f"[{datetime.now(TZ).strftime('%H:%M:%S')}] Within liquidity window (2 PM - 6 PM WAT). Scanning markets...")
+            scan_markets()
+            print("✅ Market scan complete. Exiting cleanly.")
+        else:
+            print(f"[{datetime.now(TZ).strftime('%H:%M:%S')}] Outside liquidity window (2 PM - 6 PM WAT). Skipping scan.")
+    except Exception as e:
+        print(f"Runtime error in execution: {e}")
 
-    while True:
-        try:
-            if is_liquidity_time():
-                print(f"[{datetime.now(TZ).strftime('%H:%M:%S')}] Within liquidity window (2 PM - 6 PM WAT). Scanning markets...")
-                scan_markets()
-                # Check every 60 seconds during the active window
-                time.sleep(60)
-            else:
-                # Outside window, sleep for 5 minutes before checking time again
-                print(f"[{datetime.now(TZ).strftime('%H:%M:%S')}] Outside liquidity window (2 PM - 6 PM WAT). Sleeping...")
-                time.sleep(300)
-        except Exception as e:
-            print(f"Runtime error in main loop: {e}")
-            time.sleep(60)
 
 
